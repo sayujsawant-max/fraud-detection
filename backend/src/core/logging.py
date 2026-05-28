@@ -32,6 +32,17 @@ class InterceptHandler(logging.Handler):
 
 def configure_logging(level: str = "INFO") -> None:
     """Install Loguru as the global logger."""
+    # MLflow prints status lines containing emoji (e.g. 🏃). On Windows the
+    # default console codec is cp1252 and rejects those characters, raising
+    # UnicodeEncodeError mid-run. Force UTF-8 on stdout/stderr if supported.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):  # pragma: no cover - environment-dependent
+                pass
+
     logger.remove()
     logger.add(
         sys.stdout,

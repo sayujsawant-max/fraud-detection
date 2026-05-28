@@ -1,4 +1,9 @@
+# Pre-commit hooks for FraudShield MLOps.
+# Install once with:  pre-commit install
+# Run on the full tree with: pre-commit run --all-files
+
 repos:
+  # ---- Python: lint + format (Ruff) ----
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.5.7
     hooks:
@@ -8,10 +13,23 @@ repos:
       - id: ruff-format
         files: ^backend/
 
+  # ---- Filesystem hygiene + YAML / JSON / TOML sanity ----
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
       - id: check-yaml
+        # Grafana dashboard files are valid JSON but pre-commit's
+        # check-yaml chokes on them because the loader is YAML-strict.
         exclude: ^infra/grafana/provisioning/dashboards/.*\.json$
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        # Block accidental commits of model artifacts or parquet
+        # datasets. 1 MB ceiling matches the dashboard JSON sizes.
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: detect-private-key
       - id: end-of-file-fixer
       - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]

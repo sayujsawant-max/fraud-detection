@@ -1,7 +1,7 @@
-"""Integration tests for the /health, /, and /ready endpoints.
+"""Integration tests for the /, /health, and /metrics endpoints.
 
-These tests run without any external dependency — no Docker, no PostgreSQL,
-no MLflow, no model files required.
+The /ready endpoint is covered in test_model_endpoint.py since its behavior
+now depends on predictor load state.
 """
 
 from fastapi.testclient import TestClient
@@ -29,13 +29,6 @@ def test_root_returns_metadata(client: TestClient) -> None:
     assert payload["name"] == "FraudShield API"
     assert payload["docs"] == "/docs"
     assert "version" in payload
-
-
-def test_ready_returns_ready(client: TestClient) -> None:
-    """The readiness endpoint must report ready in Phase 0."""
-    response = client.get("/ready")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ready"}
 
 
 def test_metrics_endpoint_exposed(client: TestClient) -> None:

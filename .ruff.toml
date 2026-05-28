@@ -18,6 +18,13 @@ ignore = [
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["B011"]
+# FastAPI's idiomatic dependency injection uses ``Depends(...)`` / ``Query(...)``
+# as parameter defaults. B008 fights this pattern with no upside, so exempt
+# the API router + dependency modules instead of refactoring every endpoint.
+"backend/src/api/routers/*.py" = ["B008"]
+"backend/src/api/dependencies.py" = ["B008"]
+"src/api/routers/*.py" = ["B008"]
+"src/api/dependencies.py" = ["B008"]
 
 [lint.isort]
 known-first-party = ["src"]

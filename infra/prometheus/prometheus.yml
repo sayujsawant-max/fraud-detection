@@ -1,15 +1,28 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  external_labels:
+    monitor: fraudshield-monitor
 
 scrape_configs:
+  # FraudShield FastAPI — exposes /metrics on container port 8000.
+  # Host port 8001 is for human callers; Prometheus scrapes inside the
+  # docker network where 8000 is the canonical container port.
   - job_name: fraudshield-api
     metrics_path: /metrics
+    scrape_interval: 15s
     static_configs:
       - targets:
           - api:8000
+        labels:
+          service: api
+          stack: fraudshield
 
+  # Prometheus self-scrape — gives us up/scrape_duration_seconds for the
+  # "System Health" dashboard's scrape diagnostics.
   - job_name: prometheus
     static_configs:
       - targets:
           - localhost:9090
+        labels:
+          service: prometheus

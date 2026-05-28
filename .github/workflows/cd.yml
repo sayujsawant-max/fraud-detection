@@ -1,0 +1,143 @@
+name: CD
+
+# ------------------------------------------------------------------
+# Phase 9 — image build + (optional) push to GHCR.
+#
+# This workflow is intentionally cautious:
+#   * It runs on push to ``main`` and on ``workflow_dispatch``.
+#   * It only attempts a registry login + push when the
+#     ``GHCR_TOKEN`` secret is configured. Without the secret, the
+#     job builds the images and exits 0, so CD never fails just
+#     because deployment plumbing isn't wired up yet.
+#   * Vercel + Render deploy hooks are stubbed below but skipped by
+#     default — Phase 10 will turn them on by adding the
+#     corresponding repo secrets.
+# ------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BACKEND: ${{ github.repository }}-backend
+  IMAGE_FRONTEND: ${{ github.repository }}-frontend
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Build both images. Push only when GHCR_TOKEN is configured.
+  # ------------------------------------------------------------------
+  build-and-push-images:
+    name: Build + push images
+    runs-on: ubuntu-latest
+
+    outputs:
+      pushed: ${{ steps.maybe_push.outputs.pushed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Decide whether to push
+        id: maybe_push
+        run: |
+          if [ -n "${{ secrets.GHCR_TOKEN }}" ]; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            echo "GHCR_TOKEN present — images will be pushed to ghcr.io"
+          else
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "GHCR_TOKEN missing — building images only (no push)"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: steps.maybe_push.outputs.pushed == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Backend image metadata
+        id: meta_backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_BACKEND }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Build (+ optional push) backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: ${{ steps.maybe_push.outputs.pushed == 'true' }}
+          tags: ${{ steps.meta_backend.outputs.tags }}
+          labels: ${{ steps.meta_backend.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Frontend image metadata
+        id: meta_frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_FRONTEND }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Build (+ optional push) frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: ${{ steps.maybe_push.outputs.pushed == 'true' }}
+          tags: ${{ steps.meta_frontend.outputs.tags }}
+          labels: ${{ steps.meta_frontend.outputs.labels }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:8001' }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ------------------------------------------------------------------
+  # 2. Deploy hooks (Phase 10 will turn these on).
+  # ------------------------------------------------------------------
+  deploy:
+    name: Deploy (Phase 10 hook)
+    needs: build-and-push-images
+    runs-on: ubuntu-latest
+    # Only run when the GHCR push succeeded AND at least one deploy
+    # hook is configured. Skipping is the default and prevents Phase 9
+    # CI from failing on missing secrets.
+    if: |
+      needs.build-and-push-images.outputs.pushed == 'true'
+    steps:
+      - name: Trigger Render deploy hook (optional)
+        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        run: |
+          curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+          echo "Render deploy hook fired"
+
+      - name: Trigger Vercel deploy hook (optional)
+        if: ${{ secrets.VERCEL_DEPLOY_HOOK != '' }}
+        run: |
+          curl -fsS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"
+          echo "Vercel deploy hook fired"
+
+      - name: No deploy hooks configured
+        if: ${{ secrets.RENDER_DEPLOY_HOOK == '' && secrets.VERCEL_DEPLOY_HOOK == '' }}
+        run: |
+          echo "No RENDER_DEPLOY_HOOK or VERCEL_DEPLOY_HOOK configured — Phase 10 will add them."

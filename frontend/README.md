@@ -13,7 +13,7 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-Set `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:8000`) to point at your running FastAPI backend.
+Set `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:8001`, the Docker stack's host-mapped port) to point at your running FastAPI backend. Override to `http://localhost:8000` when you're running the backend locally with `make dev`.
 
 ## Build
 

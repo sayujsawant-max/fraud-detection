@@ -5,10 +5,20 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
+
+# Cancel previous runs of the same workflow on the same ref — keeps PRs
+# from queueing up a backlog when contributors push fixups.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  backend:
-    name: Backend lint + tests
+  # ------------------------------------------------------------------
+  # 1. Backend — ruff lint + ruff format check + pytest (coverage gate)
+  # ------------------------------------------------------------------
+  backend-lint-test:
+    name: Backend (lint + tests)
     runs-on: ubuntu-latest
 
     defaults:
@@ -37,5 +47,119 @@ jobs:
       - name: Ruff lint
         run: ruff check src tests
 
-      - name: Pytest — health endpoint
-        run: pytest tests/integration/test_health_endpoint.py --tb=short -v
+      - name: Ruff format check
+        run: ruff format --check src tests
+
+      - name: Pytest with coverage
+        # The repo's pyproject.toml enforces ``fail_under = 65`` so this
+        # command also acts as the coverage gate.
+        run: pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=65
+
+      - name: Upload coverage XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          if-no-files-found: ignore
+
+  # ------------------------------------------------------------------
+  # 2. Frontend — Next.js lint + production build
+  # ------------------------------------------------------------------
+  frontend-lint-build:
+    name: Frontend (lint + build)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # ``npm ci`` matches the lockfile exactly. Falls back to ``npm
+        # install`` only when the lockfile is missing — which shouldn't
+        # happen in CI but we keep it defensive.
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Next.js lint
+        run: npm run lint
+
+      - name: Next.js production build
+        run: npm run build
+
+  # ------------------------------------------------------------------
+  # 3. Docker — build both images (no push) to catch Dockerfile drift
+  # ------------------------------------------------------------------
+  docker-build:
+    name: Docker images build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: fraudshield-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: fraudshield-frontend:ci
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://localhost:8001
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ------------------------------------------------------------------
+  # 4. Pre-commit — run every hook the repo ships against the full tree
+  # ------------------------------------------------------------------
+  precommit:
+    name: Pre-commit hooks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install pre-commit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pre-commit
+
+      - name: Run hooks
+        run: pre-commit run --all-files --show-diff-on-failure
