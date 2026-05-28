@@ -214,9 +214,7 @@ def main() -> int:
     results: list[dict[str, Any]] = []
     for built in candidates:
         try:
-            result = _train_one(
-                built, x_train, y_train, x_test, y_test, dataset_meta
-            )
+            result = _train_one(built, x_train, y_train, x_test, y_test, dataset_meta)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("model {} failed inside MLflow run: {}", built.name, exc)
             continue

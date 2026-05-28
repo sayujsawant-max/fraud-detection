@@ -24,9 +24,9 @@ if str(BACKEND_DIR) not in sys.path:
 
 from loguru import logger  # noqa: E402
 
+import src.db.models  # noqa: F401,E402  — registers tables on Base.metadata
 from src.core.config import get_settings  # noqa: E402
 from src.db.base import Base  # noqa: E402
-import src.db.models  # noqa: F401,E402  — registers tables on Base.metadata
 
 
 def _alembic_upgrade_head() -> bool:

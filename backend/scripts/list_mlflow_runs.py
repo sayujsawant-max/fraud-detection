@@ -22,10 +22,8 @@ if str(_BACKEND_ROOT) not in sys.path:
 from src.core.logging import configure_logging  # noqa: E402
 from src.training.experiment import EXPERIMENT_NAME, resolve_tracking_uri  # noqa: E402
 
-_HEADER = (
-    "{:<32} {:<22} {:>8} {:>8} {:>8} {:<10}".format(
-        "run_id", "model_type", "pr_auc", "roc_auc", "f1", "status"
-    )
+_HEADER = "{:<32} {:<22} {:>8} {:>8} {:>8} {:<10}".format(
+    "run_id", "model_type", "pr_auc", "roc_auc", "f1", "status"
 )
 
 

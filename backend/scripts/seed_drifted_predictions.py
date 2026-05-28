@@ -141,9 +141,7 @@ def seed(count: int = DEFAULT_RECORD_COUNT, seed_value: int = 1337) -> int:
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--n", type=int, default=DEFAULT_RECORD_COUNT, help="row count"
-    )
+    parser.add_argument("--n", type=int, default=DEFAULT_RECORD_COUNT, help="row count")
     parser.add_argument(
         "--seed", type=int, default=1337, help="RNG seed for reproducibility"
     )

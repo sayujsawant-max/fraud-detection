@@ -35,7 +35,8 @@ API_KEY ?= change-me
 	run-monitoring-flow run-retraining-flow deploy-prefect-flows start-prefect-worker \
 	retraining-runs trigger-retrain trigger-monitoring trigger-reload phase6-test \
 	metrics metrics-test prometheus-targets grafana-url monitoring-smoke phase7-test \
-	smoke-health smoke-predict smoke-monitoring smoke-full load-test phase9-test
+	smoke-health smoke-predict smoke-monitoring smoke-full load-test phase9-test \
+	readiness-check phase10-check
 
 # ------------------------------------------------------------------
 # Help
@@ -115,6 +116,8 @@ help:
 	@echo "  phase6-test              Phase 6 unit + integration tests"
 	@echo "  phase7-test              Phase 7 metric tests"
 	@echo "  phase9-test              Lint + tests + frontend build + smoke (full gate)"
+	@echo "  readiness-check          Phase 10 — confirm the repo is publish-ready"
+	@echo "  phase10-check            Alias for readiness-check"
 
 # ------------------------------------------------------------------
 # Setup + infra
@@ -356,3 +359,12 @@ load-test:
 phase9-test: lint format-check test-backend build-frontend
 	@echo ""
 	@echo "✓ Phase 9 gate passed: lint + format-check + tests + frontend build"
+
+# ------------------------------------------------------------------
+# Phase 10 — pre-publish readiness check
+# ------------------------------------------------------------------
+
+readiness-check:
+	python backend/scripts/project_readiness_check.py
+
+phase10-check: readiness-check

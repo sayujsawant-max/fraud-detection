@@ -125,9 +125,29 @@ Backend coverage at 76% (gate ≥65%), 220 tests passing in ~75s without live in
 
 ---
 
-## Phase 10 — Deployment & Documentation
+## Phase 10 — Deployment & Documentation ✅ *(complete)*
 
-Live public deployment (Vercel + Render), complete docs, screenshots, demo video.
+Portfolio-grade README rewrite with Mermaid architecture diagram + screenshot placeholders, comprehensive [`docs/deployment.md`](deployment.md) with seven deployment options (local Compose, Vercel, Render API, Render/Neon Postgres, MLflow self-host, Prefect Cloud, Grafana Cloud), full [`docs/architecture.md`](architecture.md) (data flow, prediction flow, drift flow, retraining flow, observability flow, DB schema), [`docs/interview-guide.md`](interview-guide.md) with 20 canonical Q&A, [`docs/demo-script.md`](demo-script.md) with a 5-minute walkthrough, [`docs/troubleshooting.md`](troubleshooting.md) with 16 common fixes, [`docs/future-improvements.md`](future-improvements.md) with near/medium/advanced horizons, `.env.production.example`, GitHub issue + PR templates, asset folders with capture guide, and `backend/scripts/project_readiness_check.py` (wired to `make readiness-check`).
+
+**Key files:** `README.md` (full rewrite), `docs/{architecture,deployment,interview-guide,demo-script,troubleshooting,future-improvements}.md`, `docs/assets/{architecture-diagram,README}.md`, `.env.production.example`, `.github/ISSUE_TEMPLATE/{bug_report,feature_request}.md`, `.github/pull_request_template.md`, `backend/scripts/project_readiness_check.py`.
+
+**Acceptance criteria:** `make readiness-check` returns exit 0; README has no fake live links; all 20 interview Q&A are concrete; deployment doc covers seven providers with checklists; no real secrets committed; existing tests + frontend build still pass.
+
+---
+
+## Final status
+
+All ten phases complete. The project is portfolio-ready.
+
+* `make docker-up` brings up the full stack in one command.
+* `make smoke-full` exercises every API endpoint end-to-end.
+* `make test-backend` runs 220 tests at 76 % coverage in ~75 s.
+* `make build-frontend` produces a 218 kB first-load Next.js bundle across 7 routes.
+* `make readiness-check` verifies the repo is publishable.
+* CI runs four parallel jobs (lint, frontend, docker, pre-commit) on every PR.
+* CD is wired up and safe to merge — it pushes to GHCR + fires Render/Vercel deploy hooks only when their respective secrets exist.
+
+Next steps that aren't a code change: capture the screenshots from `docs/assets/README.md`, record the demo from `docs/demo-script.md`, and (optionally) wire up the live deploy by adding three GitHub repo secrets.
 
 ---
 

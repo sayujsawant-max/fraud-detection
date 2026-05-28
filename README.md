@@ -1,402 +1,322 @@
 # FraudShield MLOps
 
-> A production-grade, end-to-end MLOps platform for real-time fraud detection — featuring model serving, automated drift monitoring, scheduled retraining, experiment tracking, and live observability dashboards.
+> Production-grade fraud-detection MLOps platform with FastAPI, MLflow,
+> Evidently AI, Prefect, Prometheus, Grafana, PostgreSQL, Docker, and
+> Next.js — one command brings up the full closed-loop system locally.
 
-![Status](https://img.shields.io/badge/status-phase--9--ci%2Fcd--hardening-blue)
 [![CI](https://github.com/sayujsawant-max/fraud-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/sayujsawant-max/fraud-detection/actions/workflows/ci.yml)
 [![CD](https://github.com/sayujsawant-max/fraud-detection/actions/workflows/cd.yml/badge.svg)](https://github.com/sayujsawant-max/fraud-detection/actions/workflows/cd.yml)
 ![Coverage](https://img.shields.io/badge/coverage-76%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-009688)
 ![Next.js](https://img.shields.io/badge/Next.js-14-black)
 ![Docker](https://img.shields.io/badge/docker-compose%20v2-2496ED)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## Overview
+## 1. Dashboard
 
-FraudShield is a full MLOps system — not a notebook. It serves an XGBoost fraud detection model through a versioned FastAPI, tracks every experiment in MLflow, automatically detects data drift using Evidently AI, and triggers retraining pipelines through Prefect when drift exceeds a threshold. Everything is instrumented with Prometheus and visualized in Grafana, fronted by a Next.js dashboard, and runs locally with one Docker Compose command.
+![FraudShield Dashboard](docs/assets/screenshots/dashboard-home.png)
 
-> See [FRAUDSHIELD_BLUEPRINT.md](FRAUDSHIELD_BLUEPRINT.md) for the complete senior-engineer design document.
+> Capture this image once locally: run `make docker-up && make load-test`,
+> open <http://localhost:3000>, and screenshot the Overview page. See
+> [`docs/assets/README.md`](docs/assets/README.md) for the full
+> screenshot brief.
 
----
+## 2. Live demo
 
-## Architecture
+| Surface | URL | Status |
+| --- | --- | --- |
+| Frontend | `Coming soon` | Capture screenshot locally for now |
+| API docs | `Coming soon` | <http://localhost:8001/docs> when running locally |
+| Grafana | Local only | Screenshot demo — see `docs/demo-script.md` |
+| MLflow | Local only | Screenshot demo — see `docs/demo-script.md` |
 
+The Phase 10 deployment documentation in
+[`docs/deployment.md`](docs/deployment.md) walks through the
+free-tier Vercel + Render + Prefect Cloud setup that turns the local
+demo into a public one.
+
+## 3. What this project demonstrates
+
+* **Production ML serving** — a real FastAPI endpoint scoring real
+  sklearn pipelines under p99 < 50 ms.
+* **Model registry** — MLflow registers every trained model, aliases
+  the production version, archives old versions on promotion.
+* **Experiment tracking** — three model families per training run, full
+  PR-AUC / ROC-AUC / F1 / latency captured automatically.
+* **Drift detection** — Evidently AI compares the live serving
+  distribution against the training-time reference snapshot.
+* **Automated retraining** — Prefect 3 flows on cron + drift-triggered,
+  with champion/challenger comparison and hot-reload of the live API.
+* **Observability** — Prometheus scrapes a custom `fraudshield_*`
+  namespace; Grafana renders four auto-provisioned dashboards.
+* **Audit logging** — every prediction lands in a Postgres table with
+  the full input payload for forensic + drift purposes.
+* **Premium dashboard UX** — six-page Next.js 14 App-Router dashboard
+  consuming the typed FastAPI backend.
+* **Dockerized infrastructure** — seven services with healthchecks
+  and non-root runtimes, `make docker-up` to start.
+* **CI/CD readiness** — GitHub Actions runs lint + tests + Docker
+  builds + pre-commit on every PR. CD is wired up for Vercel + Render
+  + GHCR but stays safe to merge until the deploy secrets exist.
+
+## 4. Architecture overview
+
+![Architecture](docs/assets/screenshots/architecture.png)
+
+> Capture this image by exporting the Mermaid diagram from
+> [`docs/assets/architecture-diagram.md`](docs/assets/architecture-diagram.md).
+> The renderable source is below.
+
+```mermaid
+flowchart LR
+    BR["Browser"] -->|REST| NX["Next.js Dashboard<br/>:3000"]
+    NX -->|REST| API["FastAPI<br/>host :8001 → container :8000"]
+    API -->|sklearn predict_proba| MODEL["Loaded model<br/>(MLflow alias)"]
+    API -->|async write| PG[(PostgreSQL)]
+    API -->|/metrics| PROM["Prometheus :9090"]
+    PROM --> GRAF["Grafana :3001"]
+    MODEL --- MLF["MLflow Server :5000<br/>experiments + registry"]
+    API --- EV["Evidently AI"]
+    EV --- REF["Reference parquet"]
+    PRE["Prefect Server :4200"]
+    MFLOW["monitoring_flow (6h)"]
+    RFLOW["retraining_flow (weekly + drift)"]
+    PRE --> MFLOW
+    PRE --> RFLOW
+    MFLOW --> EV
+    MFLOW -->|drift_detected=True| RFLOW
+    RFLOW -->|register + promote| MLF
+    RFLOW -->|POST /v1/admin/reload-model| API
+    RFLOW -->|audit row| PG
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         FRAUDSHIELD MLOPS                            │
-│                                                                      │
-│   DATA  →  TRAINING  →  MLFLOW REGISTRY  →  FASTAPI  →  POSTGRES     │
-│                                ↑               │                     │
-│                                │               ↓                     │
-│                          RETRAIN FLOW    PROMETHEUS → GRAFANA        │
-│                                ↑                                     │
-│                                │                                     │
-│                         EVIDENTLY DRIFT                              │
-│                                ↑                                     │
-│                         PREFECT MONITORING                           │
-│                                                                      │
-│                            NEXT.JS UI                                │
-└──────────────────────────────────────────────────────────────────────┘
-```
 
-A full ASCII architecture diagram and per-layer explanation lives in [docs/architecture.md](docs/architecture.md).
+A walk-through of the full system — data flow, prediction flow, drift
+flow, retraining flow, observability flow, DB schema — lives in
+[`docs/architecture.md`](docs/architecture.md).
 
----
+## 5. Tech stack
 
-## Tech Stack
+| Layer | Tool | Purpose |
+| --- | --- | --- |
+| API serving | **FastAPI** + Pydantic v2 + Uvicorn | Async REST API + OpenAPI docs + typed schemas |
+| Frontend | **Next.js 14** + Tailwind + Recharts | App-Router dashboard with typed API client |
+| Database | **PostgreSQL 16** + SQLAlchemy 2 + Alembic | Predictions, drift reports, retraining runs |
+| Experiment tracking | **MLflow** | Runs + registry + alias-based champion promotion |
+| Drift detection | **Evidently AI** | `DataDriftPreset` against the training reference |
+| Orchestration | **Prefect 3** | `monitoring_flow` (6 h cron) + `retraining_flow` (weekly + drift-triggered) |
+| Metrics | **Prometheus** + prometheus-client | 15 `fraudshield_*` collectors with bounded cardinality |
+| Dashboards | **Grafana** | Four auto-provisioned dashboards in the `FraudShield` folder |
+| Containers | **Docker Compose v2** | Seven services, healthchecks, named volumes |
+| CI/CD | **GitHub Actions** | 4 parallel jobs on push + PR; CD safe-to-merge until secrets exist |
+| Tests | **pytest** + httpx + aiosqlite | 220 tests / 76% coverage / no live infra needed |
+| Lint + format | **ruff** | Single tool for lint + format, pinned to the pre-commit hook version |
 
-| Layer            | Tool                                                |
-| ---------------- | --------------------------------------------------- |
-| Serving          | FastAPI, Pydantic v2, Uvicorn                       |
-| ML               | XGBoost, LightGBM, scikit-learn                     |
-| Tracking         | MLflow (experiments + model registry)               |
-| Drift            | Evidently AI                                        |
-| Orchestration    | Prefect 3                                           |
-| Observability    | Prometheus, Grafana                                 |
-| Storage          | PostgreSQL 16, SQLAlchemy 2, Alembic                |
-| Frontend         | Next.js 14 (App Router), Tailwind CSS, TypeScript   |
-| Infrastructure   | Docker Compose v2                                   |
-| CI/CD            | GitHub Actions                                      |
-
----
-
-## Quick Start
+## 6. Quick start
 
 ```bash
-# 1. Clone and enter the repo
-git clone https://github.com/<you>/fraudshield-mlops.git
-cd fraudshield-mlops
-
-# 2. Configure environment
+git clone https://github.com/<your-username>/fraud-detection.git
+cd fraud-detection
 cp .env.example .env
 
-# 3. (Only behind a TLS-intercepting proxy) Export host CAs into the build contexts
-pwsh -File scripts/export-ca-bundle.ps1   # Windows; one-time per machine
-
-# 4. Start the full stack
+# Bring up the 7-service stack
 make docker-up
+make docker-ps                   # wait until everything is "healthy"
 
-# 5. Verify the API is alive (Docker maps host 8001 → container 8000)
+# Seed the system with realistic data
+make generate-data               # train/test/reference parquet
+make train-mlflow                # 3 model families, register champion
+make promote-model VERSION=1     # flip the production alias
+make db-upgrade                  # create the 3 audit tables
+make seed-logs                   # 100 baseline predictions
+make smoke-full                  # exercise every API endpoint
+```
+
+You're now ready to open the dashboard.
+
+## 7. Service URLs
+
+| Service | URL | Notes |
+| --- | --- | --- |
+| Frontend | <http://localhost:3000> | Next.js dashboard |
+| FastAPI docs | <http://localhost:8001/docs> | Swagger UI |
+| API health | <http://localhost:8001/health> | Liveness probe |
+| MLflow | <http://localhost:5000> | Experiments + registry |
+| Prefect | <http://localhost:4200> | Flow runs + deployments |
+| Prometheus | <http://localhost:9090> | Scrape targets at `/targets` |
+| Grafana | <http://localhost:3001> | admin / admin (local only) |
+| PostgreSQL | `localhost:5432` | `${POSTGRES_USER}:${POSTGRES_PASSWORD}` from `.env` |
+
+> The Grafana credentials are the local dev defaults. **Never** reuse
+> them in production — see `.env.production.example`.
+
+## 8. Demo flow
+
+A reproducible 5-minute walkthrough lives in
+[`docs/demo-script.md`](docs/demo-script.md). Short version:
+
+1. Open the dashboard at <http://localhost:3000/>.
+2. Click **Predict** → **Load High-Risk Fraud** → **Score transaction**.
+3. Click **Logs** → top row → inspect the input-features JSON.
+4. Run `make seed-drift` in a terminal.
+5. Click **Monitoring** → **Run drift check**.
+6. Click **Open HTML ↗** on the latest report.
+7. Click **Settings** → enter API key → **Run Retraining Flow**.
+8. Open MLflow → see the new run + champion alias.
+9. Open Grafana → **FraudShield → Model Behavior**.
+
+That covers every layer of the platform.
+
+## 9. API examples
+
+```bash
+# Health
 curl http://localhost:8001/health
-```
 
-> **Behind a corporate proxy (Zscaler, Cisco Umbrella, etc.)?** Docker build containers can't see your Windows certificate store, so pip and npm fail with `CERTIFICATE_VERIFY_FAILED` / `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. The script in step 3 exports your host's trusted roots into `backend/certs/ca-bundle.pem` and `frontend/certs/ca-bundle.pem` — both Dockerfiles install that bundle before downloading any packages. The bundle is gitignored.
+# Predict
+curl -X POST http://localhost:8001/v1/predict \
+  -H "Content-Type: application/json" \
+  -d @backend/scripts/sample_transaction.json
 
----
-
-## Services
-
-| Service     | URL                       | Purpose                       |
-| ----------- | ------------------------- | ----------------------------- |
-| FastAPI     | http://localhost:8001     | Prediction API + `/docs` (host 8001 → container 8000) |
-| MLflow      | http://localhost:5000     | Experiments + Model Registry  |
-| Prefect     | http://localhost:4200     | Workflow orchestration UI     |
-| Prometheus  | http://localhost:9090     | Metrics scraping              |
-| Grafana     | http://localhost:3001     | Observability dashboards      |
-| PostgreSQL  | localhost:5432            | Prediction + drift storage    |
-| Frontend    | http://localhost:3000     | Next.js dashboard             |
-
----
-
-## Development Commands
-
-```bash
-make setup           # Install local Python and Node dependencies
-make dev             # Run backend locally (uvicorn reload)
-make test            # Run backend test suite
-make lint            # Run ruff linting
-make format          # Run ruff formatter
-make generate-data   # Generate synthetic train/test/reference parquet files
-make train-baseline  # Train baselines locally (no MLflow)
-make train-mlflow    # Train baselines, log to MLflow, register champion
-make mlflow-runs     # List recent runs from the fraud-detection experiment
-make promote-model VERSION=N   # Alias version N as production
-make run-monitoring-flow       # Run Prefect monitoring flow once (Phase 6)
-make run-retraining-flow       # Run Prefect retraining flow once (Phase 6)
-make deploy-prefect-flows      # Register cron-scheduled flows (Phase 6)
-make trigger-retrain API_KEY=change-me      # Curl POST /v1/admin/retrain
-make trigger-monitoring API_KEY=change-me   # Curl POST /v1/admin/monitoring/run
-make trigger-reload API_KEY=change-me       # Curl POST /v1/admin/reload-model
-make retraining-runs           # Curl GET  /v1/retraining/runs
-make phase6-test               # Run Phase 6 unit + integration tests
-make metrics                   # Curl GET /metrics on the API (Phase 7)
-make prometheus-targets        # Show Prometheus scrape targets state
-make grafana-url               # Print Grafana URL + admin/admin login
-make monitoring-smoke          # Generate traffic + show fraudshield_* metrics
-make phase7-test               # Run Phase 7 metric tests
-make docker-up       # Start all 7 services via Docker Compose
-make docker-down     # Stop all services
-make docker-build    # Rebuild all images
-make logs            # Tail Docker Compose logs
-make clean           # Remove caches and build artifacts
-```
-
-### Train + register a champion model
-
-```bash
-# 1. Bring the stack up (MLflow + Postgres + ...)
-make docker-up
-
-# 2. Generate the synthetic dataset
-make generate-data
-
-# 3. Train all baselines, log to MLflow, register the PR-AUC winner
-make train-mlflow
-
-# 4. Open the MLflow UI
-#    http://localhost:5000
-
-# 5. List the runs from the terminal
-make mlflow-runs
-
-# 6. Promote a model version to Production (alias = "production")
-make promote-model VERSION=1
-```
-
-> When running locally (not inside Docker), the Make targets set
-> `MLFLOW_TRACKING_URI=http://localhost:5000`. Override with
-> `make train-mlflow MLFLOW_TRACKING_URI=http://mlflow.example:5000`.
-
----
-
-## Project Status — Phase 9 (CI/CD + Quality Hardening)
-
-Phases 0–9 are complete. The full Docker Compose stack starts cleanly with healthchecks on every service, backend tests run at **220 passed / 76% coverage** in under 90 seconds, **`make smoke-full`** exercises every API endpoint end-to-end, and **GitHub Actions CI** runs ruff lint + ruff format check + pytest + Next.js lint + Next.js build + Docker buildx for both images + pre-commit hooks in four parallel jobs. The CD workflow is wired up safely — it builds images on every push to `main`, but only pushes to GHCR and fires Render/Vercel deploy hooks when the corresponding secrets are present. **No secrets, parquet datasets, or local artifacts ship with the repo**; `.gitignore` and the per-image `.dockerignore` files keep the surface clean.
-
-### Working today
-- All 7 Docker Compose services boot cleanly.
-- `make generate-data` → 120k synthetic transactions split 80/20 with a 5k reference dataset.
-- `make train-mlflow` → one MLflow run per model in experiment `fraud-detection`, champion registered as `fraud-detector`, aliased `champion`, summary at `backend/reports/mlflow_training_summary.json`.
-- `make promote-model VERSION=N` flips the `production` alias and tags older versions `Archived`.
-- `make dev` → FastAPI loads the Production model from MLflow (or a dummy fallback for dev) and exposes `/v1/predict`, `/v1/predict/batch`, `/v1/model/info`.
-- Full unit + integration test suite (`make api-test`) — runs without Docker, MLflow, or PostgreSQL by injecting a `DummyFraudModel`.
-
-### Phase 3 quick-start (the API — local `make dev` flow, port 8000)
-> When running via Docker the API is on **port 8001** instead (see the Phase 4–9 quick-starts below). `make dev` runs uvicorn directly on the host, where it listens on 8000.
-```bash
-# 1. Local dev with the dummy model (no MLflow needed)
-ALLOW_DUMMY_MODEL=true make dev
-
-# 2. Hit it (host port 8000 because make dev runs uvicorn directly)
-curl http://localhost:8000/health
-curl http://localhost:8000/ready
-curl http://localhost:8000/v1/model/info
-
-# 3. Single prediction (sample payload checked into the repo)
-make smoke-predict
-# or directly:
-curl -X POST http://localhost:8000/v1/predict \
-     -H "Content-Type: application/json" \
-     -d @backend/scripts/sample_transaction.json
-
-# 4. Batch prediction
-curl -X POST http://localhost:8000/v1/predict/batch \
-     -H "Content-Type: application/json" \
-     -d '{"transactions":[<TransactionRequest>, <TransactionRequest>]}'
-```
-
-### Real MLflow model vs dummy model
-- **Dummy** (`ALLOW_DUMMY_MODEL=true`, default in `.env.example`) — boots the API even when MLflow is missing. Returns a deterministic probability derived from a handful of risk features (`amount_to_avg_ratio`, `is_foreign_transaction`, `ip_risk_score`, …). Identifies itself as `dummy-fraud-model@dev`. Useful for local dev, CI, and smoke tests.
-- **Real** (`ALLOW_DUMMY_MODEL=false`) — the loader requires a registered model. It tries `models:/fraud-detector/Production` first, then `models:/fraud-detector@production`, then `models:/fraud-detector@champion`. If none resolve, `/ready` returns 503 and `/v1/predict` returns 503.
-
-### Phase 4 quick-start (audit trail)
-```bash
-# 1. Start the stack (brings up Postgres + MLflow + API)
-make docker-up
-
-# 2. Apply the Alembic migration that creates prediction_logs
-make db-upgrade
-
-# 3. Send a prediction — the row is logged automatically
-make smoke-predict
-
-# 4. View the audit trail (Docker stack — host port 8001)
+# Audit trail
 curl http://localhost:8001/v1/logs | python -m json.tool
 
-# 5. Aggregate summary stats (used by the dashboard later)
-curl http://localhost:8001/v1/logs/stats/summary | python -m json.tool
-
-# 6. (Optional) Backfill demo records
-make seed-logs
-
-# 7. Run the Phase 4 test bundle (no Postgres required — SQLite in-memory)
-make logs-api-test
-```
-
-### Phase 5 quick-start (drift detection)
-```bash
-# 1. Stack up + migrations
-make docker-up
-make db-upgrade
-
-# 2. Seed prediction logs — normal baseline + drifted window
-make seed-logs        # 100 normal rows
-make seed-drift       # 500 rows with shifted feature distributions
-
-# 3. Run a drift check (CLI)
-make drift-check
-# → writes backend/reports/drift/drift_<ts>.html + .json
-# → inserts one drift_reports row
-
-# 4. Trigger a drift check via the API
+# Drift check
 curl -X POST http://localhost:8001/v1/monitoring/drift/check \
-     -H "Content-Type: application/json" \
-     -d '{"limit": 1000, "min_samples": 200, "save_report": true}'
+  -H "Content-Type: application/json" \
+  -d '{"limit": 1000, "save_report": true}'
 
-# 5. View the latest drift report metadata
-curl http://localhost:8001/v1/monitoring/drift-reports/latest | python -m json.tool
-
-# 6. Open the rendered HTML report in a browser
-#    http://localhost:8001/v1/monitoring/drift-reports/<report_id>/html
-
-# 7. Aggregate monitoring stats (dashboard surface)
-curl http://localhost:8001/v1/monitoring/stats | python -m json.tool
-
-# 8. Run the Phase 5 test bundle (no Postgres / Evidently needed)
-make drift-api-test
+# Admin: trigger retraining (API-key-protected)
+curl -X POST http://localhost:8001/v1/admin/retrain \
+  -H "X-API-Key: change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"trigger_reason":"manual"}'
 ```
 
-### Phase 6 quick-start (Prefect orchestration)
+Full API reference: [`docs/api-reference.md`](docs/api-reference.md).
+
+## 10. Testing
+
 ```bash
-# 1. Stack up + migrations (creates retraining_runs table)
-make docker-up
-make db-upgrade
-
-# 2. Run the monitoring flow once (no Prefect server needed)
-make run-monitoring-flow
-
-# 3. Run the retraining flow once
-make run-retraining-flow
-
-# 4. Register both flows on cron schedules (blocks; Ctrl+C to stop)
-#    Monitoring runs every 6h, retraining runs weekly (Sun 02:00 UTC).
-#    Watch the Prefect UI at http://localhost:4200.
-make deploy-prefect-flows
-
-# 5. Trigger retraining via the API
-make trigger-retrain API_KEY=change-me
-
-# 6. Manually run monitoring via the API
-make trigger-monitoring API_KEY=change-me
-
-# 7. Hot-reload the production model after a promotion
-make trigger-reload API_KEY=change-me
-
-# 8. List the retraining runs
-make retraining-runs
-
-# 9. Inspect aggregate retraining stats
-curl http://localhost:8001/v1/retraining/stats | python -m json.tool
-
-# 10. Run the Phase 6 test bundle (no Prefect server / MLflow / Postgres needed)
-make phase6-test
+make test                # backend pytest with 65% coverage gate (currently 76%)
+make lint                # ruff check + next lint
+make format-check        # ruff format --check (CI style)
+make smoke-full          # end-to-end probe of every API endpoint
+make build-frontend      # cd frontend && npm run build
+make precommit           # run every pre-commit hook against the worktree
+make readiness-check     # Phase 10 — confirm the repo is publish-ready
 ```
 
-The Prefect UI ships with the stack at http://localhost:4200 — open it
-after `make deploy-prefect-flows` to see the two deployments
-(`fraud-monitoring-every-6h`, `fraud-retraining-weekly`) and trigger
-ad-hoc runs from there too.
+The full Phase 9 gate runs in one shot:
 
-### Phase 7 quick-start (Prometheus + Grafana)
 ```bash
-# 1. Stack up — Prometheus and Grafana are already in docker-compose
-make docker-up
-
-# 2. Generate prediction traffic so the metrics have data
-make smoke-predict
-make seed-logs        # optional: 100 demo prediction logs
-
-# 3. View the raw Prometheus metrics
-make metrics
-# or: curl http://localhost:8001/metrics
-
-# 4. Open Prometheus and check scrape targets
-#    http://localhost:9090
-#    Status → Targets → fraudshield-api should be "UP"
-make prometheus-targets
-
-# 5. Open Grafana
-#    http://localhost:3001  (admin / admin)
-make grafana-url
-
-# 6. Dashboards land under the "FraudShield" folder:
-#    - FraudShield — API Performance       (req rate, p50/p95/p99, error rate)
-#    - FraudShield — Model Behavior        (predictions, fraud rate, score dist)
-#    - FraudShield — Drift & Retraining    (drift score, retrain runs, PR-AUC)
-#    - FraudShield — System Health         (API up, scrape duration, 5xx rate)
-
-# 7. Generate traffic + show the live metrics in one go
-make monitoring-smoke
-
-# 8. Phase 7 test bundle (no Prometheus / Grafana needed)
-make phase7-test
-```
-
-### Phase 8 quick-start (Next.js dashboard)
-```bash
-# 1. Stack up (brings up the backend dependencies)
-make docker-up
-
-# 2. Open the dashboard (already built + served by the frontend container)
-#    http://localhost:3000
-
-# Pages (sidebar):
-#   /              Overview — KPIs, model info, recent predictions, charts
-#   /predict       Transaction Predictor — full form + result card
-#   /monitoring    Drift reports + manual drift check trigger
-#   /experiments   MLflow link + retraining-runs audit table
-#   /logs          Paginated prediction logs + detail drawer
-#   /settings      Admin API key + retrain/reload/monitoring actions
-
-# Local-dev (without Docker) — runs against the API at NEXT_PUBLIC_API_URL:
-cd frontend
-NODE_OPTIONS=--use-system-ca npm install
-NODE_OPTIONS=--use-system-ca npm run dev
-#   http://localhost:3000 (Next.js dev server)
-
-# Build / lint:
-npm run build          # production build
-npm run lint           # ESLint (next/core-web-vitals)
-```
-
-### Phase 9 quick-start (CI/CD + quality gates)
-```bash
-# 1. Install dev tooling locally (Python + Node + pre-commit)
-make setup
-make precommit-install         # one-time: installs git hooks
-
-# 2. Run the full quality gate in one shot
 make phase9-test
-#   -> ruff lint + ruff format-check + pytest --cov-fail-under=65 + npm run build
-
-# 3. Or run gates individually:
-make lint                      # ruff check + next lint
-make format-check              # ruff format --check (CI-style)
-make test-backend              # pytest with 65% coverage gate (current: 76%)
-make build-frontend            # next build
-make precommit                 # run every pre-commit hook against the worktree
-
-# 4. End-to-end probes (need the stack running)
-make docker-up                 # bring up the 7-service stack
-make smoke-full                # exercise every API endpoint
-make load-test                 # send 100 demo predictions
-
-# 5. CI / CD
-#   .github/workflows/ci.yml  — runs on push + PR (no secrets needed)
-#   .github/workflows/cd.yml  — builds images on push to main; pushes to
-#                               GHCR only when secrets.GHCR_TOKEN is set
 ```
 
-### Coming in later phases
-- **Phase 10** — Public deployment (Vercel + Render), screenshots, demo video
+## 11. CI / CD
 
-See [docs/phase-plan.md](docs/phase-plan.md) for the full implementation roadmap.
+* **`.github/workflows/ci.yml`** runs on every PR + push to `main` /
+  `develop`. Four parallel jobs:
+  * `backend-lint-test` — ruff lint, ruff format check, pytest with
+    `--cov-fail-under=65` (uploads coverage.xml).
+  * `frontend-lint-build` — `npm ci` → `npm run lint` → `npm run build`.
+  * `docker-build` — Buildx for both Dockerfiles (no push) with the
+    `gha` cache to keep PR runs under five minutes.
+  * `precommit` — `pre-commit run --all-files --show-diff-on-failure`.
+* **`.github/workflows/cd.yml`** runs on push to `main`. Builds both
+  images and pushes to `ghcr.io/<owner>/<repo>-{backend,frontend}`
+  *only when* `secrets.GHCR_TOKEN` is set. The Render + Vercel deploy
+  hook steps are conditional on their respective secrets too. This
+  means CD is safe to merge today; Phase 10 turns it on by adding three
+  GitHub repo secrets.
 
----
+## 12. Deployment
 
-## License
+Local Docker Compose is the recommended demo path. Seven public-cloud
+options (A–G) — Vercel for the frontend, Render for the API + Postgres
++ MLflow, Prefect Cloud for orchestration, Grafana Cloud for
+observability — are documented in [`docs/deployment.md`](docs/deployment.md)
+with checklists and a $0/month cost estimate.
 
-MIT — see [LICENSE](LICENSE).
+## 13. Interview guide
+
+Twenty canonical questions an interviewer will actually ask, with the
+answers that land well in five minutes. See
+[`docs/interview-guide.md`](docs/interview-guide.md).
+
+## 14. Screenshots
+
+Drop these into `docs/assets/screenshots/` once the stack is running
+locally — see [`docs/assets/README.md`](docs/assets/README.md) for the
+capture guide.
+
+| File | Captures |
+| --- | --- |
+| `dashboard-home.png` | Overview page with KPIs |
+| `predict-page.png` | Predict page after scoring the high-risk fraud example |
+| `monitoring-page.png` | Drift score gauge + reports table |
+| `mlflow-runs.png` | MLflow experiment view with the champion ribbon |
+| `grafana-dashboard.png` | Grafana FraudShield → Model Behavior |
+| `prefect-flow.png` | Prefect UI showing the two deployments |
+| `architecture.png` | Architecture diagram (exported from Mermaid) |
+
+A 90-second `demo.gif` walkthrough lives in `docs/assets/gifs/`.
+
+## 15. Documentation map
+
+| Document | Purpose |
+| --- | --- |
+| [`docs/architecture.md`](docs/architecture.md) | System overview + Mermaid diagram + flows + schema |
+| [`docs/deployment.md`](docs/deployment.md) | Seven deployment options (A–G) + production checklist |
+| [`docs/api-reference.md`](docs/api-reference.md) | Endpoint catalogue + request/response examples |
+| [`docs/interview-guide.md`](docs/interview-guide.md) | 20 canonical Q&A |
+| [`docs/demo-script.md`](docs/demo-script.md) | 5-minute walkthrough script + screenshot list |
+| [`docs/troubleshooting.md`](docs/troubleshooting.md) | 16 common failures + fixes |
+| [`docs/future-improvements.md`](docs/future-improvements.md) | Roadmap (near / medium / advanced) |
+| [`docs/phase-plan.md`](docs/phase-plan.md) | The 10-phase build log + status |
+| [`FRAUDSHIELD_BLUEPRINT.md`](FRAUDSHIELD_BLUEPRINT.md) | Pre-implementation reference design |
+
+## 16. Future improvements
+
+Honest backlog grouped by horizon. Highlights:
+
+* **Near-term:** per-prediction SHAP explanations, richer Recharts
+  visualisations on the Overview page, Slack alerting on drift events,
+  signed-token admin auth.
+* **Medium-term:** Kaggle IEEE-CIS dataset integration, MLflow S3
+  artifact storage, automated cloud deploys, model calibration.
+* **Advanced:** Kubernetes Helm chart, Feast feature store, Kafka
+  streaming ingestion, shadow + canary deployments, multi-model
+  registry, RBAC dashboard.
+
+Full list with rationale: [`docs/future-improvements.md`](docs/future-improvements.md).
+
+## 17. Contributing
+
+Bug reports → [`.github/ISSUE_TEMPLATE/bug_report.md`](.github/ISSUE_TEMPLATE/bug_report.md).
+Feature requests → [`.github/ISSUE_TEMPLATE/feature_request.md`](.github/ISSUE_TEMPLATE/feature_request.md).
+PRs → [`.github/pull_request_template.md`](.github/pull_request_template.md).
+
+Before opening a PR:
+
+```bash
+make precommit
+make phase9-test
+make readiness-check
+```
+
+## 18. Project status
+
+All ten phases complete — see [`docs/phase-plan.md`](docs/phase-plan.md).
+
+* 220 tests passing at 76 % backend coverage.
+* `npm run build` clean across 7 routes.
+* `make smoke-full` exercises every API endpoint.
+* `make readiness-check` verifies the repo is publish-ready.
+* CI green on every PR; CD safe to merge.
+
+## 19. License
+
+[MIT](LICENSE). Use it however you like — credit appreciated but not
+required.

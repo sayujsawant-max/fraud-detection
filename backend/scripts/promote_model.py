@@ -24,7 +24,10 @@ from src.models.registry import (  # noqa: E402
     PRODUCTION_ALIAS,
     MlflowRegistryClient,
 )
-from src.training.experiment import REGISTERED_MODEL_NAME, resolve_tracking_uri  # noqa: E402
+from src.training.experiment import (  # noqa: E402
+    REGISTERED_MODEL_NAME,
+    resolve_tracking_uri,
+)
 
 
 def _parse_args() -> argparse.Namespace:

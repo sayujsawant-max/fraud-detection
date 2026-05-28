@@ -23,9 +23,9 @@ def test_metrics_response_is_prometheus_compatible(client: TestClient) -> None:
     # Prometheus accepts ``text/plain`` with the ``version=0.0.4`` parameter
     # (the default) or the OpenMetrics ``application/openmetrics-text``
     # variant. Both are valid.
-    assert content_type.startswith("text/plain") or "openmetrics" in content_type, (
-        content_type
-    )
+    assert (
+        content_type.startswith("text/plain") or "openmetrics" in content_type
+    ), content_type
 
 
 def test_metrics_payload_contains_fraudshield_and_process_metrics(

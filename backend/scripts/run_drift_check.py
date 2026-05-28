@@ -52,7 +52,7 @@ def _resolve_path(path_like: str) -> Path:
     if direct.exists():
         return direct.resolve()
     if path_like.startswith("backend/"):
-        stripped = Path(path_like[len("backend/"):])
+        stripped = Path(path_like[len("backend/") :])
         if stripped.exists():
             return stripped.resolve()
     for parent in Path.cwd().resolve().parents:
@@ -81,16 +81,18 @@ def _load_reference(settings: Any) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def _load_current(session: Session, limit: int) -> tuple[pd.DataFrame, list[PredictionLog]]:
+def _load_current(
+    session: Session, limit: int
+) -> tuple[pd.DataFrame, list[PredictionLog]]:
     rows = list(
         session.execute(
             select(PredictionLog).order_by(desc(PredictionLog.timestamp)).limit(limit)
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     records = [
-        dict(row.input_features)
-        for row in rows
-        if isinstance(row.input_features, dict)
+        dict(row.input_features) for row in rows if isinstance(row.input_features, dict)
     ]
     df = pd.DataFrame.from_records(records)
     if TARGET_COLUMN in df.columns:

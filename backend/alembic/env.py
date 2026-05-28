@@ -23,9 +23,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+import src.db.models  # noqa: F401,E402  — registers tables on Base.metadata
 from src.core.config import get_settings  # noqa: E402  (post sys.path mutation)
 from src.db.base import Base  # noqa: E402
-import src.db.models  # noqa: F401,E402  — registers tables on Base.metadata
 
 # This is the Alembic Config object, which provides access to the values
 # within the .ini file in use.

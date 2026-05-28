@@ -121,7 +121,7 @@ def extract_drift_metrics(report_json: dict[str, Any] | None) -> dict[str, Any]:
                     out["drift_score"] = float(share)
                 if count is not None:
                     out["num_drifted_features"] = int(count)
-            elif isinstance(value, (int, float)):
+            elif isinstance(value, int | float):
                 out["drift_score"] = float(value)
 
         elif _VALUE_DRIFT_METRIC_KEY in name:

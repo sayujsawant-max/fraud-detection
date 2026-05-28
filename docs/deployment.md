@@ -1,160 +1,372 @@
 # Deployment
 
-> **Status (Phase 9):** local Docker Compose is the production-equivalent
-> environment. Public deployment + CD against real cloud providers lands
-> in **Phase 10**. This document captures the deployment checklist, the
-> CI/CD shape, and the secrets we'll need to wire up next.
+> **Status (Phase 10):** Phases 0–10 are complete. The project is
+> portfolio-ready. This document describes seven deployment options
+> (A–G) for the FraudShield MLOps stack. Local Docker Compose is the
+> recommended demo path; the public-cloud options exist for when you
+> want a live link in your portfolio.
 
-## 1. Local production-like run
+## Deployment options at a glance
 
-The full stack is a single command. There is no separate "prod" compose
-file in Phase 9 — every service is configured to match the production
-shape (non-root containers, healthchecks, named volumes, restart policy)
-with the only concession being that `api` and `prefect-flows` bind-mount
-the live source for hot reload during demos.
+| Option | Layer | Provider | Cost (free tier) | Recommended? |
+| --- | --- | --- | --- | --- |
+| **A** | Full stack | Local Docker Compose | $0 | ✅ Demo + interview |
+| **B** | Frontend | Vercel | $0 | ✅ Public demo |
+| **C** | Backend API | Render Web Service | $0 (with cold starts) | ✅ Public demo |
+| **D** | PostgreSQL | Render / Neon | $0 (~256 MB) | ✅ Public demo |
+| **E** | MLflow | Render Web Service + persistent disk | $0 / month w/ disk caveat | ⚠️ Local screenshot preferred |
+| **F** | Prefect | Prefect Cloud | $0 | ✅ Public demo |
+| **G** | Observability | Grafana Cloud / Prometheus | $0 | ⚠️ Local screenshot preferred |
+
+Quick rule of thumb: **A + B + C + D + F = portfolio-ready public
+demo**. E and G are usually better as local screenshots so you keep
+costs predictable and the demo deterministic.
+
+---
+
+## Option A — Local Docker Compose (recommended)
+
+The Phase 0–9 default. One command brings up the entire 7-service stack
+with healthchecks, named volumes, and a non-root runtime.
 
 ```bash
+# 1. Clone + configure
+git clone https://github.com/<your-username>/fraud-detection.git
+cd fraud-detection
 cp .env.example .env
-make docker-up               # starts: postgres, mlflow, api, prefect,
-                             # prometheus, grafana, frontend
-make docker-ps               # watch healthchecks turn UP
-make smoke-full              # exercise every backend endpoint
-make load-test               # send 100 demo predictions
+
+# 2. Bring up the stack
+make docker-up
+make docker-ps                       # wait until everything is "healthy"
+
+# 3. Seed the system with data
+make generate-data                   # train/test/reference parquet
+make train-mlflow                    # 3 model families, register champion
+make promote-model VERSION=1         # flip the production alias
+make db-upgrade                      # alembic migrate (3 tables)
+make seed-logs                       # 100 baseline predictions
+make load-test                       # 100 demo predictions
+
+# 4. Verify everything works
+make smoke-full
 ```
 
-Once the smoke test is green, open:
+Open:
 
-| Service     | URL                         | Notes                                   |
-| ----------- | --------------------------- | --------------------------------------- |
-| Dashboard   | http://localhost:3000       | Next.js                                 |
-| API         | http://localhost:8001       | Host port 8001 → container port 8000    |
-| API docs    | http://localhost:8001/docs  | Swagger                                 |
-| MLflow      | http://localhost:5000       | Experiments + registry                  |
-| Prefect     | http://localhost:4200       | Flow runs                               |
-| Prometheus  | http://localhost:9090       | Scrape targets at `/targets`            |
-| Grafana     | http://localhost:3001       | admin / admin · FraudShield folder      |
+| URL | Service |
+| --- | --- |
+| http://localhost:3000             | Dashboard (Next.js) |
+| http://localhost:8001/docs        | FastAPI Swagger |
+| http://localhost:5000             | MLflow |
+| http://localhost:4200             | Prefect |
+| http://localhost:9090             | Prometheus |
+| http://localhost:3001             | Grafana (admin / admin) |
 
-## 2. Required environment variables
+Stop the stack with `make docker-down`.
 
-`.env.example` is the source of truth — copy it to `.env` and fill in
-real values. The keys that matter for **production** deployment:
+---
 
-| Key                          | Why                                                  |
-| ---------------------------- | ---------------------------------------------------- |
-| `POSTGRES_USER`/`PASSWORD`/`DB` | Postgres credentials                                |
-| `DATABASE_URL`               | Async SQLAlchemy URL (auto-translated for sync use) |
-| `MLFLOW_TRACKING_URI`        | URL the API + flows read from                       |
-| `MLFLOW_MODEL_NAME`          | Registered model name (`fraud-detector`)            |
-| `API_KEY`                    | Admin endpoints; **change for prod**                |
-| `ALLOW_DUMMY_MODEL`          | Must be `false` in prod                             |
-| `MODEL_PROMOTION_MIN_DELTA`  | Retraining gate (default 0.01)                      |
-| `API_BASE_URL`               | URL the retraining flow uses for `/v1/admin/reload-model` |
-| `PREFECT_API_URL`            | Prefect Cloud or self-hosted server                 |
-| `PREFECT_API_KEY`            | Required for Prefect Cloud                          |
-| `NEXT_PUBLIC_API_URL`        | Inlined into the Next.js bundle at build time       |
-| `DRIFT_THRESHOLD`            | 0.30 default                                        |
+## Option B — Frontend on Vercel
 
-Anything containing `PASSWORD`/`KEY`/`SECRET` lives in `.env` (which is
-git-ignored). `.env.example` ships safe placeholders only.
+Vercel's free tier is the right home for the Next.js dashboard. Build
+takes ~90 s; the public URL is on the next push.
 
-## 3. CI — `.github/workflows/ci.yml`
+### Prerequisites
 
-Triggers: `push` to `main`/`develop`, every PR against those branches,
-and manual `workflow_dispatch`. Four parallel jobs:
+* GitHub repo is public (or Vercel is connected to your GitHub account).
+* The backend is reachable at a public URL (Option C below).
 
-| Job                  | What it does                                         | Required infra |
-| -------------------- | ---------------------------------------------------- | -------------- |
-| `backend-lint-test`  | ruff lint + ruff format check + pytest with `--cov-fail-under=65` (we currently sit at 76%) | None |
-| `frontend-lint-build`| `npm ci` → `npm run lint` → `npm run build`          | None           |
-| `docker-build`       | Buildx for backend + frontend Dockerfiles (no push)  | None           |
-| `precommit`          | `pre-commit run --all-files`                         | None           |
+### Steps
 
-The CI **never** requires a live PostgreSQL, MLflow, Prefect, Prometheus,
-Grafana, or any secret. Every test path goes through a dummy predictor,
-in-memory SQLite, or monkey-patched task — see the [Interview Guide](./interview-guide.md)
-for the "why".
+1. **Import the project** at <https://vercel.com/new>.
+2. **Root directory:** `frontend`. Vercel detects Next.js automatically.
+3. **Build command:** `npm run build` (default — leave as-is).
+4. **Output directory:** `.next` (default).
+5. **Environment variables:**
+   * `NEXT_PUBLIC_API_URL` = your public Render API URL from Option C
+     (e.g. `https://fraudshield-api.onrender.com`)
+6. **Deploy.** First build takes ~90 s.
 
-## 4. CD — `.github/workflows/cd.yml`
+Subsequent deploys are automatic on every push to `main`. Preview
+deploys land on every PR.
 
-Triggers: `push` to `main`, plus manual `workflow_dispatch`.
+### Wire up CI
 
-The job is built to be **safe to land before secrets exist**:
-
-1. **Always builds** both backend + frontend images via Buildx (catches
-   Dockerfile drift even when there's no deploy target yet).
-2. **Pushes** to `ghcr.io/<owner>/<repo>-{backend,frontend}` only when
-   `secrets.GHCR_TOKEN` is configured. Without the secret, the build
-   stage exits 0 and the deploy stage is skipped.
-3. **Deploy hooks** (Render + Vercel) only fire when their respective
-   `secrets.RENDER_DEPLOY_HOOK` / `secrets.VERCEL_DEPLOY_HOOK` are
-   present. Otherwise the job logs "no deploy hooks configured" and
-   exits 0.
-
-This means Phase 9 CD can be merged today without breaking — and Phase
-10 turns it on by adding three repo secrets.
-
-## 5. Phase 10 deployment checklist
-
-When you're ready to ship publicly, the work breaks down as:
-
-- [ ] Pick hosting targets (sketched below).
-- [ ] Create the database first; capture its connection URL.
-- [ ] Create the MLflow tracking server; capture its URL.
-- [ ] Run `make generate-data && make train-mlflow && make promote-model VERSION=1` against the live MLflow.
-- [ ] Configure `.env` on each compute host with real `API_KEY`, `MLFLOW_TRACKING_URI`, `DATABASE_URL`, `NEXT_PUBLIC_API_URL`.
-- [ ] Add GitHub repo secrets: `GHCR_TOKEN`, `RENDER_DEPLOY_HOOK`, `VERCEL_DEPLOY_HOOK`.
-- [ ] Push to `main` — CD builds + pushes images + triggers deploy hooks.
-- [ ] Wire Prometheus + Grafana to the real API (single scrape target swap).
-- [ ] Smoke test against the public URL: `make smoke-full SMOKE_BASE_URL=https://api.example.com`.
-
-### Suggested cloud targets
-
-| Layer         | Suggested provider                                  |
-| ------------- | --------------------------------------------------- |
-| Frontend      | Vercel (free tier)                                  |
-| Backend API   | Render (free tier; cold start acceptable for demo)  |
-| PostgreSQL    | Render Managed Postgres / Neon                      |
-| MLflow        | Render Web Service + persistent disk                |
-| Prefect       | Prefect Cloud (free tier)                           |
-| Prometheus    | Grafana Cloud (free tier) or Fly.io                 |
-| Grafana       | Grafana Cloud                                       |
-
-## 6. Local Phase 6 — Prefect operations
-
-The bare `make docker-up` brings up the Prefect *server* (UI on
-http://localhost:4200) but not the scheduled worker. Two ways to run
-flows locally:
-
-### Option A — Deploy + serve flows manually (recommended for local dev)
+The `cd.yml` workflow can fire a Vercel deploy hook on push to `main`
+once you add the secret:
 
 ```bash
-make deploy-prefect-flows
+# Vercel → Project Settings → Git → Deploy Hooks → Create Hook
+# Copy the URL into GitHub Settings → Secrets → Actions → New repo secret
+VERCEL_DEPLOY_HOOK = <hook URL>
 ```
 
-Blocks in `prefect serve(...)`. Stop with Ctrl+C. The Prefect UI shows
-two deployments — `fraud-monitoring-every-6h` and `fraud-retraining-weekly`.
+---
 
-### Option B — Run the bundled `prefect-flows` container
+## Option C — Backend on Render
+
+The Render free Web Service tier cold-starts after 15 minutes of
+inactivity (~30 s wake-up). Acceptable for a demo; not acceptable for a
+real product.
+
+### Steps
+
+1. **New → Web Service → Build and deploy from a Git repository.**
+2. **Root directory:** `backend`.
+3. **Runtime:** Python 3.11.
+4. **Build command:**
+   ```bash
+   pip install --upgrade pip && pip install -r requirements.txt
+   ```
+5. **Start command:**
+   ```bash
+   uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+   ```
+6. **Health check path:** `/health`.
+7. **Environment variables** (paste from `.env.production.example`):
+   * `DATABASE_URL` — set to the Render Postgres internal URL from
+     Option D (don't expose Postgres publicly).
+   * `MLFLOW_TRACKING_URI` — Option E URL or `http://localhost:5000`
+     if you're not deploying MLflow.
+   * `API_KEY` — random 32+ char secret. **Never** the dev default.
+   * `ALLOW_DUMMY_MODEL` — **`false`** in production.
+   * `DRIFT_THRESHOLD` — `0.30` (or your value).
+   * `FRONTEND_URL` — your Vercel URL (for CORS).
+   * `API_BASE_URL` — your Render API URL (the retraining flow uses
+     this for `/v1/admin/reload-model`).
+   * `PREFECT_API_URL`, `PREFECT_API_KEY` — from Option F.
+8. **Deploy.**
+
+### Post-deploy
 
 ```bash
-docker compose -f infra/docker-compose.yml --profile flows up -d prefect-flows
+# Run migrations once (via Render shell or one-off job):
+alembic upgrade head
+
+# Smoke-test:
+python backend/scripts/run_smoke_test.py --base-url https://<your-app>.onrender.com
 ```
 
-Same effect, just inside the Docker stack. Tail logs with
-`docker compose logs -f prefect-flows`.
+---
 
-### One-shot manual runs (no schedule)
+## Option D — PostgreSQL on Render
 
-```bash
-make run-monitoring-flow         # run the monitoring flow once
-make run-retraining-flow         # run the retraining flow once
-```
+Render Managed Postgres free tier provides ~256 MB storage. Neon's free
+tier (~3 GB) is also excellent and uses the same connection string.
 
-### Admin endpoints
+### Render PostgreSQL steps
 
-```bash
-make trigger-retrain API_KEY=change-me      # POST /v1/admin/retrain
-make trigger-monitoring API_KEY=change-me   # POST /v1/admin/monitoring/run
-make trigger-reload API_KEY=change-me       # POST /v1/admin/reload-model
-make retraining-runs                        # GET  /v1/retraining/runs
-```
+1. **New → PostgreSQL.**
+2. Pick a name, region (same as the API), free plan.
+3. Wait ~2 min for provisioning.
+4. Copy the **Internal Database URL** (starts with
+   `postgres://...internal:5432/...`). The internal URL only works
+   from inside Render, which is what you want — Postgres should never
+   be public.
+5. Paste that URL as `DATABASE_URL` in Option C's environment.
+6. Run migrations from the API service shell:
+   ```bash
+   alembic upgrade head
+   ```
+
+### Neon alternative
+
+1. Create a project at <https://neon.tech>.
+2. Copy the connection string (`postgresql://...pooler.neon.tech/...`).
+3. Same `DATABASE_URL` env var on Render.
+
+---
+
+## Option E — MLflow deployment
+
+Two paths:
+
+### E.1 — Keep MLflow local for the portfolio (recommended)
+
+The dashboard's Experiments page links to the local MLflow UI. For
+public demos, take a screenshot of the experiment list with three runs
+and the champion alias, drop it at
+`docs/assets/screenshots/mlflow-runs.png`, and link from the README.
+
+The Render-deployed API can still resolve `MLFLOW_TRACKING_URI` to a
+non-existent host as long as `ALLOW_DUMMY_MODEL=false` AND the model
+has been baked into the Docker image during the build (out of scope
+for the free tier).
+
+### E.2 — Deploy MLflow as a Render Web Service
+
+For when you want the live tracking UI public.
+
+1. Create a new Render Web Service.
+2. **Runtime:** Docker.
+3. Point the Dockerfile at `infra/mlflow/Dockerfile` (build context:
+   `infra/mlflow/`).
+4. **Persistent disk:** mount at `/mlflow/artifacts` (1 GB tier).
+5. **Start command:**
+   ```bash
+   mlflow server \
+     --host 0.0.0.0 \
+     --port $PORT \
+     --backend-store-uri $DATABASE_URL \
+     --default-artifact-root /mlflow/artifacts
+   ```
+6. **Environment:**
+   * `DATABASE_URL` — same Render Postgres URL as the API.
+
+> **Security note:** Public MLflow exposes the model registry and run
+> artifacts. Either put it behind Render's basic auth, or front it with
+> a Cloudflare Tunnel + Access policy. The Phase 10 portfolio path is
+> usually to keep it local and screenshot it.
+
+---
+
+## Option F — Prefect Cloud
+
+Prefect Cloud's free tier covers one workspace and unlimited
+deployments — plenty for FraudShield's two flows.
+
+### Steps
+
+1. Sign up at <https://app.prefect.cloud>.
+2. Create a workspace (free tier).
+3. Generate an API key: **Settings → API Keys → Create**.
+4. Copy the workspace API URL (Settings → API URL) and the API key.
+5. Paste into Render (Option C environment):
+   * `PREFECT_API_URL` = workspace URL
+     (e.g. `https://api.prefect.cloud/api/accounts/<id>/workspaces/<id>`)
+   * `PREFECT_API_KEY` = the key
+6. From your local machine, deploy the flows:
+   ```bash
+   make deploy-prefect-flows
+   ```
+
+The flows now show up in the Prefect Cloud UI on cron, even when your
+laptop is closed.
+
+### Skip Prefect Cloud for a local-only demo
+
+The Phase 6 deployment script works against the bundled Prefect server
+inside the Compose stack — no cloud account needed.
+
+---
+
+## Option G — Grafana / Prometheus
+
+### G.1 — Local screenshots (recommended)
+
+Run `make load-test` and screenshot the four FraudShield dashboards at
+http://localhost:3001 under the **FraudShield** folder. Drop into
+`docs/assets/screenshots/`:
+
+* `grafana-dashboard.png` — Model Behavior
+* (optional) `grafana-system-health.png`, etc.
+
+### G.2 — Grafana Cloud free tier
+
+1. Create a Grafana Cloud account.
+2. Get the Prometheus remote-write URL + API key.
+3. Add a remote-write block to `infra/prometheus/prometheus.yml`:
+   ```yaml
+   remote_write:
+     - url: https://prometheus-prod-<region>.grafana.net/api/prom/push
+       basic_auth:
+         username: <prom-instance-id>
+         password: <api-key>
+   ```
+4. Import the four `infra/grafana/provisioning/dashboards/*.json` files
+   into Grafana Cloud via **Dashboards → Import JSON**.
+
+> Costs may apply above the free tier's metric retention limits. The
+> free tier is enough for a demo.
+
+---
+
+## Production environment checklist
+
+Before you go public, work through this list:
+
+* [ ] `.env.production` has no leftover dev defaults (`change-me`,
+      `fraudshield_password`, …).
+* [ ] `ALLOW_DUMMY_MODEL=false` everywhere.
+* [ ] `API_KEY` is a random 32+ char secret you've stored in a password
+      manager.
+* [ ] `DATABASE_URL` uses the internal database hostname, not the public
+      one.
+* [ ] `FRONTEND_URL` matches the Vercel deployment URL exactly (CORS).
+* [ ] `NEXT_PUBLIC_API_URL` on Vercel matches the Render API URL exactly
+      (it's baked into the JS bundle at build time).
+* [ ] `MLFLOW_TRACKING_URI` is reachable from the API at runtime.
+* [ ] First Alembic migration ran successfully against the public DB.
+* [ ] First MLflow model is registered + aliased `production`.
+* [ ] CORS headers are present on `OPTIONS` preflight.
+* [ ] Prometheus scrape targets are UP at the public API.
+* [ ] Smoke test against the public URL is green:
+      `python backend/scripts/run_smoke_test.py --base-url https://<api-url>`
+* [ ] GitHub Actions CI is green on `main`.
+* [ ] `.github/workflows/cd.yml` has the `GHCR_TOKEN`,
+      `RENDER_DEPLOY_HOOK`, and (optionally) `VERCEL_DEPLOY_HOOK`
+      secrets configured.
+
+## Deployment troubleshooting
+
+* **Render API returns 503 immediately after deploy.** Cold start. Hit
+  `/health` once to wake the dyno; subsequent requests are fast.
+* **CORS error from Vercel → Render.** `FRONTEND_URL` on the API must
+  exactly match the Vercel URL (no trailing slash). Restart the API.
+* **MLflow model not found in production.** Run
+  `make train-mlflow && make promote-model VERSION=1` against the
+  public MLflow before flipping `ALLOW_DUMMY_MODEL` to false.
+* **Prefect deployments never run.** The Prefect Cloud workspace needs
+  a worker; for `flow.serve()` the worker is embedded — make sure the
+  process is still running.
+* **Postgres "too many connections."** Lower `DB_POOL_SIZE` /
+  `DB_MAX_OVERFLOW` in the API env. Free-tier Postgres caps connections
+  around 20.
+
+The full troubleshooting catalogue lives in
+[`docs/troubleshooting.md`](troubleshooting.md).
+
+## Cost estimate
+
+Free-tier-only ("interview demo"):
+
+| Layer | Provider | Monthly cost |
+| --- | --- | --- |
+| Frontend | Vercel free | $0 |
+| Backend API | Render Web Service free | $0 (with cold starts) |
+| Database | Render Postgres free | $0 (256 MB) |
+| Tracking | Local screenshot | $0 |
+| Orchestration | Prefect Cloud free | $0 |
+| Observability | Local screenshot | $0 |
+| **Total** | | **$0/month** |
+
+Production-grade ("real product"):
+
+| Layer | Provider | Monthly cost |
+| --- | --- | --- |
+| Backend API | Render Standard ($7) or Fly Performance ($5) | $5–7 |
+| Database | Neon Pro or Render Standard | $19 |
+| MLflow | Render Standard + persistent disk | $7 + $1/GB |
+| Prefect | Prefect Cloud paid | $0 (free under 20 k task runs/month) |
+| Grafana Cloud Pro | optional | $0–8 |
+| **Total** | | **~$32–42/month** |
+
+## Security notes
+
+* **Admin API key.** Treat it like a password. Rotate via Render env-var
+  update + `make trigger-reload` (no code change required).
+* **MLflow public exposure.** If you must expose MLflow publicly, put it
+  behind Cloudflare Access or Render basic auth. Otherwise anyone can
+  download your model artifacts.
+* **Prefect Cloud API key.** Stays inside the API service. Never inline
+  it into the Next.js bundle.
+* **Vercel preview deploys.** Use a *different* API URL for previews
+  (a staging Render service) so PRs can't accidentally write to
+  production data.
+* **GitHub repo secrets.** `GHCR_TOKEN` needs `write:packages` scope.
+  Deploy hooks need no scope (URL is the secret). Document rotations in
+  a runbook.
+
+See `docs/troubleshooting.md` for fix recipes and the
+[Phase 9 Interview Guide §19](interview-guide.md) for the full
+security-posture answer.

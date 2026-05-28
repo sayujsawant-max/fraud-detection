@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from mlflow.exceptions import MlflowException
-from scripts.train_with_mlflow import select_champion
 
+from scripts.train_with_mlflow import select_champion
 from src.models.registry import (
     PRODUCTION_ALIAS,
     STAGE_TAG_KEY,
