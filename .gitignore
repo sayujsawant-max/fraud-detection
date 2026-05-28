@@ -99,8 +99,10 @@ reports/
 Thumbs.db
 
 # ---------- Logs ----------
+# Match a top-level ``logs/`` dir only — without the leading ``/`` git
+# would also ignore Next.js App-Router pages like ``frontend/src/app/logs/``.
 *.log
-logs/
+/logs/
 
 # ---------- Misc ----------
 .cache/
