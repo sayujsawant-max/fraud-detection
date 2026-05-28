@@ -1,0 +1,34 @@
+# Build/test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Generated data + reports (only present at runtime)
+data/raw/
+data/processed/
+reports/
+mlruns/
+*.parquet
+*.csv
+
+# Local secrets
+.env
+.env.local
+
+# Note: certs/ca-bundle.pem IS intentionally included — both Dockerfiles
+# COPY it before pip install to trust corporate proxy CAs. Do not ignore it.

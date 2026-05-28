@@ -1,0 +1,23 @@
+# Node + Next.js
+node_modules/
+.next/
+out/
+.turbo/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local secrets / runtime
+.env
+.env.local
+.env.*.local
+.vercel
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Note: certs/ca-bundle.pem IS intentionally included — the Dockerfile
+# COPYs it so Node trusts corporate proxy CAs (NODE_EXTRA_CA_CERTS).
